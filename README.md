@@ -1,45 +1,18 @@
 # Green Lab Experiment
 
-This repository contains `test_energy_training.py`, this script measures the energy, runtime, CPU, memory, and performance of two types of machine learning models: logistic regression and linear regression, using two libraries: scikit-learn and statsmodels.
+The experiment framework is designed to:
 
-## Purpose:
-This helps compare different ML models and libraries not only by performance but also by energy efficiency and resource usage.
+Train and evaluate ML models (logistic regression or linear regression) using either scikit-learn or statsmodels.
 
-## Prerequisites
+- Measure CPU time, memory usage, runtime, and energy consumption during training and inference.
 
-Before installing the requirements, ensure you have the following tools installed:
+- Estimate CO₂ emissions based on energy consumed.
 
-- **CodeCarbon**  
-    [CodeCarbon Documentation](https://mlco2.github.io/codecarbon/)
-    ```bash
-    pip install codecarbon
-    ```
 
-- **PyJoules**  
-    [PyJoules Documentation](https://pyjoules.readthedocs.io/)
-    ```bash
-    pip install pyJoules
-    ```
+### Files
 
-## Installation
+- RunnerConfig.py: Experiment runner configuration and hooks for measurement.
 
-1. Clone the repository:
-     ```bash
-     git clone 
-     cd experiment
-     ```
+- ml_utils.py: ML model training, inference, and persistence utilities.
 
-2. Install dependencies from `requirements.txt`:
-     ```bash
-     pip install -r requirements.txt
-     ```
-
-## Usage
-
-Run the energy training script:
-```bash
-python test_energy_training.py
-```
-Note: You might run the command with sudo 
-
-The results will be available in csv format in `ml_energy_results.csv` and `emissions.csv`
+- energy_utils.py: Functions to summarize EnergiBridge logs and compute energy/CO₂.
