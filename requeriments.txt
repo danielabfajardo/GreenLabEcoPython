@@ -1,7 +1,0 @@
-numpy==1.24.3
-pandas==2.0.3
-psutil==5.9.4
-scikit-learn==1.2.2
-statsmodels==0.14.0
-pyJoules==0.2.0
-codecarbon==2.1.4
