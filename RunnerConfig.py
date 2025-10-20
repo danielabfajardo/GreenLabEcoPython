@@ -136,8 +136,10 @@ class RunnerConfig:
         Activities after starting the run should also be performed here."""
         pass       
 
+    # This function initializes and starts the energy and resource measurement for an experiment run.
+    # It sets up the EnergiBridge profiler, configures output paths, and begins logging energy, CPU, and memory usage.
+    # The measurement continues until stop_measurement is called, ensuring all resource usage during the run is captured.
     def start_measurement(self, context: RunnerContext) -> None:
-        """Perform any activity required for starting measurements."""
         """Perform any activity required for starting measurements."""
         algorithm = context.execute_run["algorithm"]
         library = context.execute_run["library"]
@@ -176,6 +178,9 @@ class RunnerConfig:
         """Perform any interaction with the running target system here, or block here until the target finishes."""
         pass
 
+    # This function stops the energy and resource measurement for an experiment run.
+    # It finalizes the EnergiBridge profiler, collects and saves the logged energy, CPU, and memory usage data.
+    # This ensures all resource usage during the run is properly recorded and available for analysis.
     def stop_measurement(self, context: RunnerContext) -> None:
         """Perform any activity here required for stopping measurements."""
         algo = context.execute_run["algorithm"]
@@ -227,6 +232,9 @@ class RunnerConfig:
         Activities after stopping the run should also be performed here."""
         pass
 
+    # This function collects and aggregates all relevant metrics and results from the experiment run.
+    # It extracts accuracy, F1, R2, runtime, energy, CO2, CPU, and memory usage, and organizes them into a structured format.
+    # The data is then saved to the run table for later analysis and comparison across different experiment configurations.
     def populate_run_data(self, context: RunnerContext) -> Optional[Dict[str, Any]]:
         """
         Populate the run table with metrics from inference_results.csv and calculated energy/system metrics.

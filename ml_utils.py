@@ -13,6 +13,10 @@ warnings.filterwarnings('ignore')
 
 MODEL_SAVE_PATH = "trained_model.pkl"
 
+# This function prepares the medical insurance dataset for machine learning experiments.
+# It creates three dataset sizes (small, medium, large) with different numbers of features and rows, using sampling with or without replacement.
+# For each size, it encodes categorical variables, handles missing values, selects the appropriate features, and splits the data into train and test sets.
+# The processed datasets are saved for use in downstream training and evaluation.
 def preprocess_datasets(
     source_csv="GreenLabEcoPython/datasets/bcsc_risk_factors_summarized1_092020.csv",
     out_dir="GreenLabEcoPython/datasets"
@@ -123,6 +127,9 @@ def preprocess_datasets(
     print(f"[INFO] Columns in medium: {feature_sets['medium']}")
     print(f"[INFO] Columns in large: {feature_sets['large']}")
 
+# This function trains a machine learning model using the provided training dataset.
+# It selects the appropriate algorithm and hyperparameters, fits the model to the data, and evaluates performance metrics.
+# The trained model is then saved for later inference and analysis.
 def train_model(algo, lib, X_train, y_train):
     """Train and return model, possibly with scaler."""
     if algo == "logistic":
@@ -148,7 +155,9 @@ def train_model(algo, lib, X_train, y_train):
             model = sm.OLS(y_train, X_sm).fit()
             return model
 
-
+# This function loads a trained machine learning model and applies it to the test dataset for inference.
+# It generates predictions, computes relevant evaluation metrics, and returns the results for analysis.
+# This step is essential for assessing model performance on unseen data.
 def inference_model(algo, lib, model, X_test, y_test):
     """Perform inference and return metrics."""
     if algo == "logistic":
