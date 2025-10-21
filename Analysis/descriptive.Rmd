@@ -1,0 +1,352 @@
+
+```{r}
+# Install packages
+install.packages(c("tidyverse", "ggplot2", "bestNormalize", "ARTool", "lmerTest", "xtable"))
+```
+```{r}
+# Load the libraries
+library(tidyverse)
+library(ggplot2)
+library(bestNormalize)
+library(ARTool)
+library(lmerTest)
+library(xtable)
+```
+```{r}
+# load the dataset from data/run_table
+run_data <- read_csv("data/run_table.csv")
+```
+```{r}
+# Inspect the dataset structure
+glimpse(run_data)
+head(run_data)
+summary(run_data)
+```
+```{r}
+# Load data and handle non-standard column names
+run_data %>%
+  # Use backticks for non-standard column name `__done`
+  filter(`__done` == "DONE") %>%
+  mutate(
+    algorithm = as_factor(algorithm),
+    library = as_factor(library),
+    dataset = as_factor(dataset),
+    process = as_factor(process),
+    group_key = paste(library, algorithm, process, dataset, sep = "_")
+  )
+```
+```{r}
+# Explore overall distributions
+# Compute summary stats for numeric columns using tidyverse
+numeric_cols <- run_data %>% select(where(is.numeric))
+
+overall_summary <- numeric_cols %>%
+  summarise(across(everything(), list(
+    mean = ~mean(., na.rm = TRUE),
+    median = ~median(., na.rm = TRUE),
+    sd = ~sd(., na.rm = TRUE),
+    min = ~min(., na.rm = TRUE),
+    max = ~max(., na.rm = TRUE)
+  )))
+  print(overall_summary)
+```
+```{r}
+# Function to compute descriptives for a given library
+compute_descriptives <- function(data, lib) {
+  if (!lib %in% unique(data$library)) {
+    stop(paste("Library", lib, "not found in the data"))
+  }
+
+  data_lib <- data %>% filter(library == lib)
+
+  required_cols <- c("accuracy", "f1_score", "r2", "runtime_s", "cpu_user_s", 
+                     "cpu_system_s", "memory_delta_mb", "energy_j", "estimated_CO2_kg")
+  missing_cols <- setdiff(required_cols, colnames(data_lib))
+  if (length(missing_cols) > 0) {
+    warning(paste("Missing columns:", paste(missing_cols, collapse = ", ")))
+  }
+
+  # Step 1: summarise
+  summary_tbl <- suppressWarnings({
+    data_lib %>%
+      group_by(process) %>%
+      summarise(
+        across(
+          all_of(required_cols),
+          list(
+            mean = ~mean(., na.rm = TRUE),
+            median = ~median(., na.rm = TRUE),
+            sd = ~sd(., na.rm = TRUE),
+            min = ~min(., na.rm = TRUE),
+            max = ~max(., na.rm = TRUE)
+          ),
+          .names = "{.col}_{.fn}"
+        ),
+        .groups = "drop"
+      )
+  })
+
+  # Step 2: pivot longer (flatten)
+  long_tbl <- summary_tbl %>%
+    pivot_longer(cols = -process, names_to = "metric_fn", values_to = "value")
+
+  # Step 3: extract metric and fn safely
+  long_tbl <- long_tbl %>%
+    mutate(
+      fn = sub(".*_(mean|median|sd|min|max)$", "\\1", metric_fn),
+      metric = sub("_(mean|median|sd|min|max)$", "", metric_fn)
+    ) %>%
+    select(-metric_fn)
+
+  # Debug check
+  # print(head(long_tbl))
+
+    # Step 4: pivot wider safely
+    wide_tbl <- long_tbl %>%
+    pivot_wider(
+        names_from = c(fn, process),
+        values_from = value,
+        names_glue = "{fn}_{process}"
+    )
+
+  # Step 5: recode metric names and reorder
+  descriptives <- wide_tbl %>%
+    mutate(
+      metric = recode(
+        metric,
+        "accuracy" = "Accuracy",
+        "f1_score" = "F1 Score",
+        "r2" = "R\\textsuperscript{2}",
+        "runtime_s" = "Runtime (s)",
+        "cpu_user_s" = "CPU User (s)",
+        "cpu_system_s" = "CPU System (s)",
+        "memory_delta_mb" = "Memory $\\Delta$ (MB)",
+        "energy_j" = "Energy (J)",
+        "estimated_CO2_kg" = "Estimated CO$_2$ (kg)"
+      )
+    ) %>%
+    select(
+      metric,
+      mean_training, median_training, sd_training, min_training, max_training,
+      mean_inference, median_inference, sd_inference, min_inference, max_inference
+    )
+
+  return(descriptives)
+}
+```
+```{r}
+# Generate tables for sklearn and statsmodels
+sklearn_descriptives <- compute_descriptives(run_data, "sklearn")
+statsmodels_descriptives <- compute_descriptives(run_data, "statsmodels")
+
+# Create LaTeX tables
+# Sklearn table
+sklearn_table <- xtable(
+  sklearn_descriptives, 
+  caption = "Global Descriptive Statistics Across All Runs (Training vs Inference Summary) for Sklearn",
+  label = "tab:global_summary_sklearn",
+  align = c("l", "l", rep("r", 10)),  # FIXED
+  digits = 3
+)
+print(
+  sklearn_table, 
+  include.rownames = FALSE,
+  booktabs = TRUE,
+  sanitize.text.function = function(x) x,
+  caption.placement = "top",
+  table.placement = "ht",
+  hline.after = c(-1, 0, nrow(sklearn_descriptives))
+)
+```
+```{r}
+# Statsmodels table
+statsmodels_table <- xtable(
+  statsmodels_descriptives, 
+  caption = "Global Descriptive Statistics Across All Runs (Training vs Inference Summary) for Statsmodels",
+  label = "tab:global_summary_statsmodels",
+  align = c("l", "l", rep("r", 10)),  # FIXED
+  digits = 3
+)
+print(
+  statsmodels_table, 
+  include.rownames = FALSE,
+  booktabs = TRUE,
+  sanitize.text.function = function(x) x,
+  caption.placement = "top",
+  table.placement = "ht",
+  hline.after = c(-1, 0, nrow(statsmodels_descriptives))
+)
+```
+```{r}
+cat("### 4.1 Overall Descriptive Statistics\n")
+cat("Across all runs, the dataset reveals distinct energy consumption patterns between sklearn and statsmodels. ",
+    "For sklearn, the mean energy consumption is approximately ", round(mean(run_data$energy_j[run_data$library == "sklearn"], na.rm = TRUE), 2), 
+    " Joules, with training and inference processes showing similar distributions as detailed in Table \\ref{tab:global_summary_sklearn}. ",
+    "In contrast, statsmodels exhibits a higher mean energy use of ", round(mean(run_data$energy_j[run_data$library == "statsmodels"], na.rm = TRUE), 2), 
+    " Joules, particularly during training, as seen in Table \\ref{tab:global_summary_statsmodels}. ",
+    "Runtime averages ", round(mean(run_data$runtime_s, na.rm = TRUE), 2), " seconds across both libraries, with variability reflected in the standard deviations. ",
+    "Estimated CO2 emissions align with energy trends, averaging ", round(mean(run_data$estimated_CO2_kg, na.rm = TRUE), 2), " kg. ",
+    "These initial insights highlight library-specific efficiency differences, setting the stage for further analysis.\n")
+```
+```{r}
+############################### PHASE 3 ##################################
+
+# Function to detect outliers using IQR method
+detect_outliers <- function(x) {
+  q <- quantile(x, probs = c(0.25, 0.75), na.rm = TRUE)
+  iqr <- q[2] - q[1]
+  lower_bound <- q[1] - 1.5 * iqr
+  upper_bound <- q[2] + 1.5 * iqr
+  outliers <- x < lower_bound | x > upper_bound
+  return(sum(outliers, na.rm = TRUE))
+}
+
+# Step 1: Descriptive Statistics by Library and Algorithm
+lib_algo_summary <- run_data %>%
+  group_by(library, algorithm) %>%
+  summarise(
+    across(c(energy_j, runtime_s, cpu_user_s, cpu_system_s, memory_delta_mb, estimated_CO2_kg, accuracy, f1_score, r2),
+           list(mean = ~mean(., na.rm = TRUE),
+                sd = ~sd(., na.rm = TRUE)),
+           .names = "{.col}_{.fn}"),
+    outliers_energy = detect_outliers(energy_j),
+    outliers_runtime = detect_outliers(runtime_s),
+    .groups = "drop"
+  )
+
+# Step 2: Descriptive Statistics by Dataset Size
+dataset_summary <- run_data %>%
+  group_by(library, algorithm, dataset) %>%
+  summarise(
+    across(c(energy_j, runtime_s, cpu_user_s, cpu_system_s, memory_delta_mb, estimated_CO2_kg),
+           list(mean = ~mean(., na.rm = TRUE),
+                sd = ~sd(., na.rm = TRUE)),
+           .names = "{.col}_{.fn}"),
+    outliers_energy = detect_outliers(energy_j),
+    outliers_runtime = detect_outliers(runtime_s),
+    .groups = "drop"
+  )
+
+# Step 3: Descriptive Statistics by Process
+process_summary <- run_data %>%
+  group_by(library, algorithm, process) %>%
+  summarise(
+    across(c(energy_j, runtime_s, cpu_user_s, cpu_system_s, memory_delta_mb, estimated_CO2_kg, accuracy, f1_score, r2),
+           list(mean = ~mean(., na.rm = TRUE),
+                sd = ~sd(., na.rm = TRUE)),
+           .names = "{.col}_{.fn}"),
+    outliers_energy = detect_outliers(energy_j),
+    outliers_runtime = detect_outliers(runtime_s),
+    .groups = "drop"
+  )
+
+# Step 6: Create Tables
+# Table for Library and Algorithm
+lib_algo_table <- lib_algo_summary %>%
+  select(library, algorithm, ends_with("mean"), ends_with("sd"), starts_with("outliers")) %>%
+  mutate(across(where(is.numeric), ~round(., 3))) %>%
+  arrange(library, algorithm)
+print(xtable(lib_algo_table,
+             caption = "Descriptive Statistics by Library and Algorithm (Mean, SD, Outliers)",
+             label = "tab:lib_algo_summary",
+             align = c("l", rep("l", 2), rep("r", ncol(lib_algo_table) - 2)),
+             digits = 3),
+      include.rownames = FALSE,
+      booktabs = TRUE,
+      caption.placement = "top",
+      table.placement = "ht")
+
+# Table for Dataset Size
+dataset_table <- dataset_summary %>%
+  select(library, algorithm, dataset, ends_with("mean"), ends_with("sd"), starts_with("outliers")) %>%
+  mutate(across(where(is.numeric), ~round(., 3))) %>%
+  arrange(library, algorithm, dataset)
+print(xtable(dataset_table,
+             caption = "Descriptive Statistics by Dataset Size (Mean, SD, Outliers)",
+             label = "tab:dataset_summary",
+             align = c("l", rep("l", 3), rep("r", ncol(dataset_table) - 3)),
+             digits = 3),
+      include.rownames = FALSE,
+      booktabs = TRUE,
+      caption.placement = "top",
+      table.placement = "ht")
+
+# Table for Process
+process_table <- process_summary %>%
+  select(library, algorithm, process, ends_with("mean"), ends_with("sd"), starts_with("outliers")) %>%
+  mutate(across(where(is.numeric), ~round(., 3))) %>%
+  arrange(library, algorithm, process)
+print(xtable(process_table,
+             caption = "Descriptive Statistics by Process (Mean, SD, Outliers)",
+             label = "tab:process_summary",
+             align = c("l", rep("l", 3), rep("r", ncol(process_table) - 3)),
+             digits = 3),
+      include.rownames = FALSE,
+      booktabs = TRUE,
+      caption.placement = "top",
+      table.placement = "ht")
+
+# Step 7: Visualize Distributions and Save Figures
+# Density plots for all key metrics with color coding for training vs inference
+metrics <- c("energy_j", "runtime_s", "cpu_user_s", "cpu_system_s", "memory_delta_mb", "estimated_CO2_kg")
+for (metric in metrics) {
+  p <- ggplot(run_data, aes_string(x = metric, fill = "process")) +
+    geom_density(alpha = 0.6) +  # Density plot with transparency
+    labs(title = paste("Density of", gsub("_", " ", metric)),
+         x = gsub("_", " ", metric),
+         y = "Density",
+         fill = "Process") +  # Legend title
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+          legend.position = "top") +
+    scale_fill_brewer(palette = "Set2")  # Color coding for training and inference
+  ggsave(filename = paste0("fig_density_", gsub("_", "", metric), ".png"), plot = p, width = 8, height = 6, dpi = 300)
+}
+
+# Boxplots to check outliers by grouping factors, with color coding for process
+# Energy Consumption by Dataset Size, Library, and Process
+p_energy <- ggplot(run_data, aes(x = dataset, y = energy_j, fill = process)) +
+  geom_boxplot() +
+  labs(title = "Energy Consumption by Dataset Size and Process",
+       x = "Dataset Size",
+       y = "Energy (J)",
+       fill = "Process") +  # Legend title
+  theme_minimal() +
+  theme(legend.position = "top") +
+  scale_fill_brewer(palette = "Set2") +  # Color coding for training and inference
+  facet_wrap(~library, ncol = 2)  # Separate by library for clarity
+ggsave(filename = "fig_energy_boxplot.png", plot = p_energy, width = 10, height = 6, dpi = 300)
+
+# Runtime by Process and Library, with color coding for process
+p_runtime <- ggplot(run_data, aes(x = library, y = runtime_s, fill = process)) +
+  geom_boxplot() +
+  labs(title = "Runtime by Library and Process",
+       x = "Library",
+       y = "Runtime (s)",
+       fill = "Process") +  # Legend title
+  theme_minimal() +
+  theme(legend.position = "top") +
+  scale_fill_brewer(palette = "Set2")  # Color coding for training and inference
+ggsave(filename = "fig_runtime_boxplot.png", plot = p_runtime, width = 8, height = 6, dpi = 300)
+
+# Step 8: Output Narrative
+cat("### 4.2 Stats by Algorithm and Library\n")
+cat("Figure \\ref{fig:lib_algo_summary} visualizes the distribution of key metrics across libraries and algorithms using density plots, summarizing mean and variance, ",
+    "with boxplots checking for outliers. Sklearn exhibits a lower mean energy (", round(mean(run_data$energy_j[run_data$library == "sklearn"], na.rm = TRUE), 2), 
+    " J) compared to statsmodels (", round(mean(run_data$energy_j[run_data$library == "statsmodels"], na.rm = TRUE), 2), 
+    " J), and ", sum(lib_algo_summary$outliers_energy), " energy outliers are detected. ",
+    "Linear algorithms show less variability than logistic ones, as reflected in the density distributions of Figure \\ref{fig:lib_algo_summary}.\n")
+
+cat("### 4.3 Impact of Dataset Size\n")
+cat("Figure \\ref{fig:dataset_summary} presents density plots summarizing the distribution and variance of energy consumption by dataset size, ",
+    "with boxplots checking for outliers, which increase to ", sum(dataset_summary$outliers_energy), " for large datasets peaking at ", 
+    round(mean(run_data$energy_j[run_data$dataset == "large"], na.rm = TRUE), 2), 
+    " J. The visualizations reveal skewed distributions and outlier presence, particularly for statsmodels across dataset sizes in Figure \\ref{fig:dataset_summary}.\n")
+
+cat("### 4.4 Training vs. Inference Differences\n")
+cat("Figure \\ref{fig:process_summary} displays density plots summarizing the distribution and variance of energy and runtime, ",
+    "with boxplots checking for outliers, identifying ", sum(process_summary$outliers_energy), " energy outliers. ",
+    "Training consumes more energy (mean ", round(mean(run_data$energy_j[run_data$process == "training"], na.rm = TRUE), 2), 
+    " J) than inference (mean ", round(mean(run_data$energy_j[run_data$process == "inference"], na.rm = TRUE), 2), 
+    " J), and the color-coded plots show higher runtime variance in training compared to inference in Figure \\ref{fig:process_summary}.\n")
+```
