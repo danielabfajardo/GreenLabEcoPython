@@ -30,7 +30,7 @@ class RunnerConfig:
     name: str = "ml_energy_experiment2"
     results_output_path: Path = ROOT_DIR / 'experiments'
     operation_type: OperationType = OperationType.AUTO
-    time_between_runs_in_ms: int = 5000
+    time_between_runs_in_ms: int = 120_000
 
     # Dynamic configurations can be one-time satisfied here before the program takes the config as-is
     # e.g. Setting some variable based on some criteria
