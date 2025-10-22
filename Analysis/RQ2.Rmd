@@ -11,7 +11,7 @@ library(lmerTest)
 library(xtable)
 ```
 
-## Section 1: Data Loading 
+## Data Loading 
 
 ```{r}
 # load the dataset from data/run_table
@@ -116,11 +116,61 @@ Because many values are still below 0.05, we proceed with non-parametric tests (
 ```{r, results='hide', message=FALSE}
 library(ARTool)
 
-model_t = art(energy_j ~ library * dataset + Error(trial), data = run_data_training)
-anova_results_t <- as.data.frame(anova(model_t))
+algorithms <- unique(run_data_training$algorithm) #training, inference
 
-model_i = art(energy_j ~ library * dataset + Error(trial), data = run_data_inference)
-anova_results_i <- as.data.frame(anova(model_i))
+# Function to run ART ANOVA and return results
+run_art_analysis <- function(data, response_var, process_label, alg_label) {
+formula_str <- paste0(response_var, " ~ library * dataset + Error(trial)")
+model <- art(as.formula(formula_str), data = data)
+res <- as.data.frame(anova(model))
+
+list(model = model, results = res, process = process_label, algorithm = alg_label, response = response_var)
+}
+
+# Run for each combination: process × algorithm × response
+art_results <- list()
+
+for (alg in algorithms) {
+  # Training Energy
+  art_results[[paste0("t_energy_", alg)]] <- run_art_analysis(
+  run_data_training %>% filter(algorithm == alg),
+  "energy_j",
+  "training",
+  alg
+  )
+
+  # Inference Energy
+  art_results[[paste0("i_energy_", alg)]] <- run_art_analysis(
+  run_data_inference %>% filter(algorithm == alg),
+  "energy_j",
+  "inference",
+  alg
+  )
+
+  # Training Runtime
+  art_results[[paste0("t_runtime_", alg)]] <- run_art_analysis(
+  run_data_training %>% filter(algorithm == alg),
+  "runtime_s",
+  "training",
+  alg
+  )
+
+  # Inference Runtime
+  art_results[[paste0("i_runtime_", alg)]] <- run_art_analysis(
+  run_data_inference %>% filter(algorithm == alg),
+  "runtime_s",
+  "inference",
+  alg
+  )
+}
+
+
+
+# model_t = art(energy_j ~ library * dataset + Error(trial), data = run_data_training)
+# anova_results_t <- as.data.frame(anova(model_t))
+
+# model_i = art(energy_j ~ library * dataset + Error(trial), data = run_data_inference)
+# anova_results_i <- as.data.frame(anova(model_i))
 
 ```
 
@@ -146,88 +196,200 @@ Inference:
 ### Post-hoc analysis
 
 ```{r, results='hide', message=FALSE}
-interaction_contrasts_t <- art.con(model_t, "library:dataset")
-summary(interaction_contrasts_t)
+# interaction_contrasts_t <- art.con(model_t, "library:dataset")
+# summary(interaction_contrasts_t)
 
-interaction_contrasts_i <- art.con(model_i, "library:dataset")
-summary(interaction_contrasts_i)
+# interaction_contrasts_i <- art.con(model_i, "library:dataset")
+# summary(interaction_contrasts_i)
 ```
 
 ### Residuals
 
 ```{r}
-qqnorm(resid(model_t))
-qqline(resid(model_t))
-shapiro.test(resid(model_t))
+# qqnorm(resid(model_t))
+# qqline(resid(model_t))
+# shapiro.test(resid(model_t))
 ```
 
 We can see residuals are not normal, which might be the result that our data doesn't meet the conditional normality assumption, even though it's distribution with no regard to factors looks normal.
 
 ## Annotated Tables
 
-### Training
-
 ```{r}
-library(xtable)
-library(dplyr)
+library(stringr)
 
-anova_df_t <- as.data.frame(anova_results_t) %>%
-  mutate(
-    # Compute partial eta squared
-    partial_eta2 = `Sum Sq` / (`Sum Sq` + `Sum Sq.res`),
-    # Format p-values nicely
-    p.value = ifelse(`Pr(>F)` < 0.001, "< 0.001", sprintf("%.3f", `Pr(>F)`))
-  ) %>%
-  # Select and rename columns for clarity
-  select(
-    Term,
-    Df,
-    Df.res,
-    `F value`,
-    p.value,
-    partial_eta2
+make_anova_table <- function(anova_df, caption, label) {
+  # Number of tests = number of rows
+  n_tests <- nrow(anova_df)
+
+  anova_df <- anova_df %>%
+    mutate(
+      p.value = `Pr(>F)`,
+      p.bonf = p.adjust(p.value, method = "bonferroni")
+    )
+  anova_df <- anova_df %>%
+    mutate(
+      Term = case_when(
+        Term == "dataset" ~ "Dataset Size",
+        Term == "library" ~ "Library",
+        Term == "library:dataset" ~ "Library × Dataset Size",
+        TRUE ~ Term
+      ),
+      partial_eta2 = `Sum Sq` / (`Sum Sq` + `Sum Sq.res`),
+      p.value = ifelse(`Pr(>F)` < 0.001, "< 0.001", sprintf("%.3f", `Pr(>F)`)),
+      p.bonf = ifelse(p.bonf < 0.001, "< 0.001", sprintf("%.3f", p.bonf))
+    ) %>%
+    select(Term, Df, `F value`, p.bonf, partial_eta2)
+  
+  xt <- xtable(
+    anova_df,
+    caption = caption,
+    label = label,
+    digits = c(0, 0, 0, 3, 3, 3)
   )
+  
+  # Escape backslashes properly
+  names(xt) <- c(
+    "\\textbf{Term}",
+    "\\textbf{Df}",
+    "\\textbf{F value}",
+    "\\textbf{$p$-value}",
+    "\\textbf{Partial $\\eta^2$}"
+  )
+  
+  print(
+    xt,
+    include.rownames = FALSE,
+    caption.placement = "top",
+    sanitize.text.function = identity
+  )
+}
 
-# Convert to LaTeX table
-anova_xtable_t <- xtable(
-  anova_df_t,
-  caption = "ART ANOVA Results for Training",
-  label = "tab:art_train",
-  digits = c(0, 0, 0, 0, 3, 3, 3)
-)
 
-# Print LaTeX table with the caption at the top
-print(anova_xtable_t, include.rownames = FALSE, caption.placement = "top")
+for (name in names(art_results)) {
+  res <- art_results[[name]]
+  alg <- res$algorithm
+  proc <- res$process
+  resp <- ifelse(res$response == "energy_j", "Energy Consumption", "Runtime")
+
+  caption <- paste0(
+    "ART ANOVA for ", resp, " (", str_to_title(proc),
+    ", Algorithm = ", str_to_title(alg), ")"
+  )
+  
+  # Safe LaTeX label (no spaces or special chars)
+  label <- paste0(
+    "tab_art_", proc, "_",
+    ifelse(res$response == "energy_j", "energy", "runtime"), "_",
+    alg
+  )
+  
+  cat("\n\n%### ", caption, "\n")
+  
+  make_anova_table(
+    res$results,
+    caption = caption,
+    label = label
+  )
+}
+
+
+```
+
+### Training
+```{r}
+# library(xtable)
+# library(dplyr)
+
+# anova_df_t <- as.data.frame(anova_results_t) %>%
+#   mutate(
+#     Term = case_when(
+#       Term == "dataset" ~ "Dataset Size",
+#       Term == "library" ~ "Library",
+#       Term == "library:dataset" ~ "Library × Dataset Size",
+#       TRUE ~ Term
+#     ),
+#     # Compute partial eta squared
+#     partial_eta2 = `Sum Sq` / (`Sum Sq` + `Sum Sq.res`),
+#     # Format p-values nicely
+#     p.value = ifelse(`Pr(>F)` < 0.001, "< 0.001", sprintf("%.3f", `Pr(>F)`))
+#   ) %>%
+#   select(
+#     Term,
+#     Df,
+#     `F value`,
+#     p.value,
+#     partial_eta2
+#   )
+
+# # Create LaTeX table
+# anova_xtable_t <- xtable(
+#   anova_df_t,
+#   caption = "ART ANOVA for Energy Consumption (Training)",
+#   label = "tab:art_training",
+#   digits = c(0, 0, 0, 3, 3, 3)
+# )
+
+# # Custom column names (with LaTeX math mode for p-value)
+# names(anova_xtable_t) <- c("\\textbf{Term}",
+#                            "\\textbf{Df}",
+#                            "\\textbf{F value}",
+#                            "\\textbf{$p$-value}",
+#                            "\\textbf{Partial $\\eta^2$}")
+
+# # Print with LaTeX syntax preserved
+# print(
+#   anova_xtable_t,
+#   include.rownames = FALSE,
+#   caption.placement = "top",
+#   sanitize.text.function = identity
+# )
 ```
 
 ### Inference
 
 ```{r}
-anova_df_i <- as.data.frame(anova_results_i) %>%
-  mutate(
-    # Compute partial eta squared
-    partial_eta2 = `Sum Sq` / (`Sum Sq` + `Sum Sq.res`),
-    # Format p-values nicely
-    p.value = ifelse(`Pr(>F)` < 0.001, "< 0.001", sprintf("%.3f", `Pr(>F)`))
-  ) %>%
-  # Select and rename columns for clarity
-  select(
-    Term,
-    Df,
-    Df.res,
-    `F value`,
-    p.value,
-    partial_eta2
-  )
+# anova_df_i <- as.data.frame(anova_results_i) %>%
+#   mutate(
+#     Term = case_when(
+#       Term == "dataset" ~ "Dataset Size",
+#       Term == "library" ~ "Library",
+#       Term == "library:dataset" ~ "Library × Dataset Size",
+#       TRUE ~ Term
+#     ),
+#     # Compute partial eta squared
+#     partial_eta2 = `Sum Sq` / (`Sum Sq` + `Sum Sq.res`),
+#     # Format p-values nicely
+#     p.value = ifelse(`Pr(>F)` < 0.001, "< 0.001", sprintf("%.3f", `Pr(>F)`))
+#   ) %>%
+#   select(
+#     Term,
+#     Df,
+#     `F value`,
+#     p.value,
+#     partial_eta2
+#   )
 
-# Convert to LaTeX table
-anova_xtable_i <- xtable(
-  anova_df_i,
-  caption = "ART ANOVA Results for Inference",
-  label = "tab:art_inference",
-  digits = c(0, 0, 0, 0, 3, 3, 3)
-)
+# # Create LaTeX table
+# anova_xtable_i <- xtable(
+#   anova_df_i,
+#   caption = "ART ANOVA for Energy Consumption (Inference)",
+#   label = "tab:art_inference",
+#   digits = c(0, 0, 0, 3, 3, 3)
+# )
 
-# Print LaTeX table with the caption at the top
-print(anova_xtable_i, include.rownames = FALSE, caption.placement = "top")
+# # Custom column names (with LaTeX math mode for p-value)
+# names(anova_xtable_i) <- c("\\textbf{Term}",
+#                            "\\textbf{Df}",
+#                            "\\textbf{F value}",
+#                            "\\textbf{$p$-value}",
+#                            "\\textbf{Partial $\\eta^2$}")
+
+# # Print with LaTeX syntax preserved
+# print(
+#   anova_xtable_i,
+#   include.rownames = FALSE,
+#   caption.placement = "top",
+#   sanitize.text.function = identity
+# )
 ```
