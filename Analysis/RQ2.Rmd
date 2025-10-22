@@ -1,0 +1,233 @@
+# Research Question 2 hypothesis testing
+
+### Setup
+```{r, results='hide', message=FALSE}
+install.packages(c("tidyverse", "ggplot2", "bestNormalize", "ARTool", "lmerTest", "xtable"))
+library(tidyverse)
+library(ggplot2)
+library(bestNormalize)
+library(ARTool)
+library(lmerTest)
+library(xtable)
+```
+
+## Section 1: Data Loading 
+
+```{r}
+# load the dataset from data/run_table
+run_data <- read_csv("data/run_table.csv")
+```
+```{r}
+# Inspect the dataset structure
+glimpse(run_data)
+head(run_data)
+summary(run_data)
+```
+```{r}
+# Load data and handle non-standard column names
+run_data <- run_data %>%
+  # Use backticks for non-standard column name `__done`
+  filter(`__done` == "DONE") %>%
+  mutate(
+    algorithm = as_factor(algorithm),
+    library = as_factor(library),
+    dataset = as_factor(dataset),
+    process = as_factor(process),
+    group_key = paste(library, algorithm, process, dataset, sep = "_"),
+    trial = as_factor(str_extract(`__run_id`, "(?<=rep)\\d+"))
+  )
+
+
+run_data_training <- run_data %>% filter(process == "training")
+run_data_inference <- run_data %>% filter(process == "inference")
+
+tail(run_data %>% select(`__run_id`, process, trial))
+dim(run_data_training)
+```
+
+dim(run_data_inference)
+[1] 240  18
+dim(run_data_training)
+[1] 240  18
+
+## Data Normality
+
+```{r}
+# Run Shapiro-Wilk for each group
+normality_results_t <- run_data_training %>%
+  group_by(library, dataset) %>%
+  summarise(
+    shapiro_p = shapiro.test(energy_j)$p.value,
+    .groups = "drop"
+  )
+
+normality_results_i <- run_data_inference %>%
+  group_by(library, dataset) %>%
+  summarise(
+    shapiro_p = shapiro.test(energy_j)$p.value,
+    .groups = "drop"
+  )
+
+normality_results_t
+```
+
+p < 0.05 for each library*dataset combination - reject normality (data is not normal).
+
+### Normalization
+
+```{r}
+bn_t <- bestNormalize(run_data_training$energy_j)
+run_data_training$norm_energy_usage <- bn_t$x.t
+
+bn_i <- bestNormalize(run_data_inference$energy_j)
+run_data_inference$norm_energy_usage <- bn_i$x.t
+```
+
+# Shapiro-Wilk again for normalized values
+
+```{r}
+# Histogram of normalized values
+ggplot(run_data_training, aes(x = norm_energy_usage)) +
+  geom_histogram(bins = 30, fill = "lightgreen", color = "black") +
+  theme_minimal() +
+  labs(
+    title = "Histogram of Normalized Energy Usage",
+    x = "Normalized Energy Usage",
+    y = "Frequency"
+  )
+
+normality_results_norm <- run_data_training %>%
+  group_by(library, dataset) %>%
+  summarise(
+    shapiro_p = shapiro.test(norm_energy_usage)$p.value,
+    .groups = "drop"
+  )
+
+normality_results_norm
+```
+
+For both libraries in large dataset size we can't reject normality.
+Because many values are still below 0.05, we proceed with non-parametric tests (Wilcoxon, ART).
+
+## Non-Parametric Tests for RQ2
+
+### Aligned rank transform (ART) ANOVA 
+
+```{r, results='hide', message=FALSE}
+library(ARTool)
+
+model_t = art(energy_j ~ library * dataset + Error(trial), data = run_data_training)
+anova_results_t <- as.data.frame(anova(model_t))
+
+model_i = art(energy_j ~ library * dataset + Error(trial), data = run_data_inference)
+anova_results_i <- as.data.frame(anova(model_i))
+
+```
+
+-   To check if model is correct we simpy run command `summary(model)` and investigate whether all F-values are 0.
+F values of ANOVAs on aligned responses not of interest (should all be ~0):
+   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+      0       0       0       0       0       0 
+
+-   `anova(model)` shows us information about influence of each variable and their interactions.
+
+Training:
+                  Error Df Df.res F value     Pr(>F)    
+1 library         Withn  1    215 141.110 < 2.22e-16 ***
+2 dataset         Withn  2    215  63.930 < 2.22e-16 ***
+3 library:dataset Withn  2    215  69.742 < 2.22e-16 ***
+
+Inference:
+                  Error Df Df.res F value     Pr(>F)    
+1 library         Withn  1    215 114.643 < 2.22e-16 ***
+2 dataset         Withn  2    215 354.023 < 2.22e-16 ***
+3 library:dataset Withn  2    215  54.511 < 2.22e-16 ***
+
+### Post-hoc analysis
+
+```{r, results='hide', message=FALSE}
+interaction_contrasts_t <- art.con(model_t, "library:dataset")
+summary(interaction_contrasts_t)
+
+interaction_contrasts_i <- art.con(model_i, "library:dataset")
+summary(interaction_contrasts_i)
+```
+
+### Residuals
+
+```{r}
+qqnorm(resid(model_t))
+qqline(resid(model_t))
+shapiro.test(resid(model_t))
+```
+
+We can see residuals are not normal, which might be the result that our data doesn't meet the conditional normality assumption, even though it's distribution with no regard to factors looks normal.
+
+## Annotated Tables
+
+### Training
+
+```{r}
+library(xtable)
+library(dplyr)
+
+anova_df_t <- as.data.frame(anova_results_t) %>%
+  mutate(
+    # Compute partial eta squared
+    partial_eta2 = `Sum Sq` / (`Sum Sq` + `Sum Sq.res`),
+    # Format p-values nicely
+    p.value = ifelse(`Pr(>F)` < 0.001, "< 0.001", sprintf("%.3f", `Pr(>F)`))
+  ) %>%
+  # Select and rename columns for clarity
+  select(
+    Term,
+    Df,
+    Df.res,
+    `F value`,
+    p.value,
+    partial_eta2
+  )
+
+# Convert to LaTeX table
+anova_xtable_t <- xtable(
+  anova_df_t,
+  caption = "ART ANOVA Results for Training",
+  label = "tab:art_train",
+  digits = c(0, 0, 0, 0, 3, 3, 3)
+)
+
+# Print LaTeX table with the caption at the top
+print(anova_xtable_t, include.rownames = FALSE, caption.placement = "top")
+```
+
+### Inference
+
+```{r}
+anova_df_i <- as.data.frame(anova_results_i) %>%
+  mutate(
+    # Compute partial eta squared
+    partial_eta2 = `Sum Sq` / (`Sum Sq` + `Sum Sq.res`),
+    # Format p-values nicely
+    p.value = ifelse(`Pr(>F)` < 0.001, "< 0.001", sprintf("%.3f", `Pr(>F)`))
+  ) %>%
+  # Select and rename columns for clarity
+  select(
+    Term,
+    Df,
+    Df.res,
+    `F value`,
+    p.value,
+    partial_eta2
+  )
+
+# Convert to LaTeX table
+anova_xtable_i <- xtable(
+  anova_df_i,
+  caption = "ART ANOVA Results for Inference",
+  label = "tab:art_inference",
+  digits = c(0, 0, 0, 0, 3, 3, 3)
+)
+
+# Print LaTeX table with the caption at the top
+print(anova_xtable_i, include.rownames = FALSE, caption.placement = "top")
+```
